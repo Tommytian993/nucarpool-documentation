@@ -1,19 +1,27 @@
+// Mapbox library and styles
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
+// Next.js type definitions
 import type { GetServerSidePropsContext, NextPage } from "next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RiFocus3Line } from "react-icons/ri";
+// Toast notifications provider
 import { ToastProvider } from "react-toast-notifications";
+// Map event handling tool
 import addMapEvents from "../utils/map/addMapEvents";
 import Head from "next/head";
 import { trpc } from "../utils/trpc";
+// Browser environment variables
 import { browserEnv } from "../utils/env/browser";
 import Header, { HeaderOptions } from "../components/Header";
+// NextAuth session retrieval function
 import { getSession } from "next-auth/react";
 import Spinner from "../components/Spinner";
 import { UserContext } from "../utils/userContext";
+// lodash library - utility functions
 import _, { debounce } from "lodash";
 import { SidebarPage } from "../components/Sidebar/Sidebar";
+// type definitions
 import {
   CarpoolAddress,
   CarpoolFeature,
@@ -23,27 +31,42 @@ import {
   PublicUser,
   Request,
 } from "../utils/types";
+// Prisma generated types
 import { Role, User } from "@prisma/client";
+// route viewing related tools
 import { useGetDirections, viewRoute } from "../utils/map/viewRoute";
+// map connect portal component
 import { MapConnectPortal } from "../components/MapConnectPortal";
+// search hook
 import useSearch from "../utils/search";
+// map and address related components
 import AddressCombobox from "../components/Map/AddressCombobox";
-import updateUserLocation from "../utils/map/updateUserLocation";
+import updateUserLocation from "../utils/map/updateUserLocation"; 
 import { MapLegend } from "../components/MapLegend";
+// image and icon components
 import Image from "next/image";
 import BlueSquare from "../../public/user-dest.png";
 import BlueCircle from "../../public/blue-circle.png";
+// components that changes st
 import VisibilityToggle from "../components/Map/VisibilityToggle";
 import updateCompanyLocation from "../utils/map/updateCompanyLocation";
+// message panel component
 import MessagePanel from "../components/Messages/MessagePanel";
 import InactiveBlocker from "../components/Map/InactiveBlocker";
+// GeoJSON user update tool
 import updateGeoJsonUsers from "../utils/map/updateGeoJsonUsers";
 
+// set mapbox access token, is this the global variable that is used to access the mapbox api?
 mapboxgl.accessToken = browserEnv.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
 
+/**
+ * Server side property retrieval function
+ * Mainly Check user authentication status and onboarding completion status?
+ */
 export async function getServerSideProps(context: GetServerSidePropsContext) {
   const session = await getSession(context);
 
+  // 如果用户未登录，重定向到登录页面
   if (!session?.user) {
     return {
       redirect: {
@@ -52,6 +75,7 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
       },
     };
   }
+  // 如果用户未完成引导，重定向到设置页面
   if (!session.user.isOnboarded) {
     return {
       redirect: {
@@ -66,7 +90,12 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
   };
 }
 
+/**
+ * Home page component - the main interface of this app
+ * Contains map, user list, filters, etc.
+ */
 const Home: NextPage<any> = () => {
+  // initial filters state, this is the default filters that will be used when the user first loads the page, filters what user sees on the map
   const initialFilters: FiltersState = {
     days: 0,
     flexDays: 1,
@@ -81,16 +110,25 @@ const Home: NextPage<any> = () => {
     favorites: false,
     messaged: false,
   };
+  
+  // temporary other user state, this is used to store the user that is being viewed, it is used to update the company location on the map
   const [tempOtherUser, setTempOtherUser] = useState<PublicUser | null>(null);
   const [tempOtherUserMarkerActive, setTempOtherUserMarkerActive] =
     useState(false);
+  // default filters state, this is the default filters that will be used when the user first loads the page, filters what user sees on the map
   const [defaultFilters] = useState<FiltersState>(initialFilters);
   const [filters, setFilters] = useState<FiltersState>(initialFilters);
+  // sort method
   const [sort, setSort] = useState<string>("any");
   const [debouncedFilters, setDebouncedFilters] = useState(filters);
+  // other user state, this is used to store the user that is being viewed, it is used to update the company location on the map
   const [otherUser, setOtherUser] = useState<PublicUser | null>(null);
+  // map initialization state
   const isMapInitialized = useRef(false);
+  // map state if loaded
   const [mapStateLoaded, setMapStateLoaded] = useState(false);
+  
+  // debounce effect - update filters after 300ms, Maybe is used to prevent the map from updating too often?
   useEffect(() => {
     const handler = debounce(() => {
       setDebouncedFilters(filters);
@@ -103,10 +141,13 @@ const Home: NextPage<any> = () => {
     };
   }, [filters]);
 
+  // get geojson users data
   const { data: geoJsonUsers } =
     trpc.mapbox.geoJsonUserList.useQuery(debouncedFilters);
 
+  // get current user information, the one that is logged in
   const { data: user = null } = trpc.user.me.useQuery();
+  // get recommendations list of users that are recommended to the current user
   const { data: recommendations = [] } = trpc.user.recommendations.me.useQuery(
     {
       sort: sort,
@@ -114,55 +155,75 @@ const Home: NextPage<any> = () => {
     },
     { refetchOnMount: true }
   );
+  // get favorites list of users 
   const { data: favorites = [] } = trpc.user.favorites.me.useQuery(undefined, {
     refetchOnMount: true,
   });
+  // get requests data
   const requestsQuery = trpc.user.requests.me.useQuery(undefined, {
     refetchOnMount: "always",
   });
   const { data: requests = { sent: [], received: [] } } = requestsQuery;
+  // tRPC utility function, related to request cache?
   const utils = trpc.useContext();
+  
+  // handle user selection
   const handleUserSelect = (userId: string) => {
     setSelectedUserId(userId);
     if (userId !== "") {
       setOtherUser(null);
     }
   };
+  
+  // map state
   const [mapState, setMapState] = useState<mapboxgl.Map>();
+  // sidebar type
   const [sidebarType, setSidebarType] = useState<HeaderOptions>("explore");
+  // popup users list
   const [popupUsers, setPopupUsers] = useState<PublicUser[] | null>(null);
+  // map container reference, the div that contains the map?
   const mapContainerRef = useRef(null);
+  // route points array, Maybe array of points to draw the route?
   const [points, setPoints] = useState<[number, number][]>([]);
+  // company address suggestions list, a list of suggestions for the company address?
   const [companyAddressSuggestions, setCompanyAddressSuggestions] = useState<
     CarpoolFeature[]
   >([]);
+  // start address suggestions list
   const [startAddressSuggestions, setStartAddressSuggestions] = useState<
     CarpoolFeature[]
   >([]);
 
+  // selected company address,center:[0,0] here means the center of the map?
   const [companyAddressSelected, setCompanyAddressSelected] =
     useState<CarpoolAddress>({
       place_name: "",
       center: [0, 0],
     });
+  // selected start address
   const [startAddressSelected, setStartAddressSelected] =
     useState<CarpoolAddress>({
       place_name: "",
       center: [0, 0],
     });
 
+  // company address input
   const [companyAddress, setCompanyAddress] = useState("");
+  // debounce update company address, useMemo is used to memoize the function, so that it is not recreated on every render
   const updateCompanyAddress = useMemo(
     () => debounce(setCompanyAddress, 250),
     []
   );
 
+  // start address input
   const [startingAddress, setStartingAddress] = useState("");
+  // debounce update start address
   const updateStartingAddress = useMemo(
     () => debounce(setStartingAddress, 250),
     []
   );
 
+  // extend public user information, add favorite and request status
   const extendPublicUser = useCallback(
     (user: PublicUser): EnhancedPublicUser => {
       const incomingReq: Request | undefined = requests.received.find(
@@ -182,13 +243,16 @@ const Home: NextPage<any> = () => {
     [favorites, requests]
   );
 
+  // handle message sent, invalidate request cache and refetch requests
   const handleMessageSent = (selectedUserId: string) => {
     utils.user.requests.me.invalidate();
     requestsQuery.refetch();
     setSelectedUserId(selectedUserId);
   };
+  // selected user id
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
+  // selected user information
   const selectedUser: EnhancedPublicUser | null = useMemo(() => {
     if (!selectedUserId || !requests) return null;
     const allRequests = [...requests.sent, ...requests.received];
@@ -203,25 +267,36 @@ const Home: NextPage<any> = () => {
     return null;
   }, [selectedUserId, requests, extendPublicUser]);
 
+  // handle route view click event, maybe trigger when user clicks on a user on the map?
   const onViewRouteClick = useCallback(
     (user: User, clickedUser: PublicUser) => {
       if (!mapStateLoaded || !mapState || !geoJsonUsers) return;
+      
+      // check if other user is in geojson list
       const isOtherUserInGeoList = geoJsonUsers.features.some(
         (f) => f.properties?.id === clickedUser.id
       );
       const isPrevOtherUserInGeoList = geoJsonUsers.features.some(
         (f) => f.properties?.id === tempOtherUser?.id
       );
+      
+      // check if should remove marker
       const shouldRemoveMarker =
         tempOtherUserMarkerActive &&
         ((tempOtherUser && tempOtherUser.id !== clickedUser.id) ||
           isPrevOtherUserInGeoList);
+      
       setOtherUser(clickedUser);
+      
+      // check if viewer has selected address
       const isViewerAddressSelected =
         companyAddressSelected.place_name !== "" &&
         startAddressSelected.place_name !== "";
+      
       const companyCord: number[] = companyAddressSelected.center;
       const startCord: number[] = startAddressSelected.center;
+      
+      // calculate user start and company coordinates
       const userStartLng = isViewerAddressSelected
         ? startCord[0]
         : user.startCoordLng;
@@ -234,6 +309,8 @@ const Home: NextPage<any> = () => {
       const userCompanyLat = isViewerAddressSelected
         ? companyCord[1]
         : user.companyCoordLat;
+      
+      // user coordinates configuration
       const userCoord =
         !isViewerAddressSelected && user.role === "VIEWER"
           ? undefined
@@ -244,6 +321,7 @@ const Home: NextPage<any> = () => {
               endLng: userCompanyLng,
             };
 
+      // if not viewer, update user and company location
       if (user.role !== "VIEWER") {
         updateUserLocation(mapState, userStartLng, userStartLat);
         updateCompanyLocation(
@@ -255,6 +333,8 @@ const Home: NextPage<any> = () => {
           true
         );
       }
+      
+      // remove previous temporary marker
       if (shouldRemoveMarker && tempOtherUser) {
         updateCompanyLocation(
           mapState,
@@ -268,6 +348,8 @@ const Home: NextPage<any> = () => {
         setTempOtherUserMarkerActive(false);
         setTempOtherUser(null);
       }
+      
+      // if other user is not in geojson list and is selected user
       if (!isOtherUserInGeoList && selectedUserId === clickedUser.id) {
         updateCompanyLocation(
           mapState,
@@ -285,6 +367,7 @@ const Home: NextPage<any> = () => {
         return;
       }
 
+      // route view properties
       const viewProps = {
         user,
         otherUser: clickedUser,
@@ -292,6 +375,7 @@ const Home: NextPage<any> = () => {
         userCoord,
       };
 
+      // set route points based on user role
       if (user.role === "RIDER") {
         setPoints([
           [clickedUser.startPOICoordLng, clickedUser.startPOICoordLat],
@@ -325,17 +409,24 @@ const Home: NextPage<any> = () => {
       tempOtherUserMarkerActive,
     ]
   );
+  
+  // enhance sent users list
   const enhancedSentUsers = requests.sent.map((request: { toUser: any }) =>
     extendPublicUser(request.toUser!)
   );
+  // enhance received users list, maybe enhance means add favorite and request status?
   const enhancedReceivedUsers = requests.received.map(
     (request: { fromUser: any }) => extendPublicUser(request.fromUser!)
   );
+  // enhance recommendations list,
   const enhancedRecs = recommendations.map(extendPublicUser);
+  // enhance favorites list
   const enhancedFavs = favorites.map(extendPublicUser);
+  
+  // update filters based on user information
   useEffect(() => {
     if (user && user.role !== "VIEWER") {
-      // update filter params
+      // update filters parameters
       setFilters((prev) => ({
         ...prev,
         startDate: user.coopStartDate ? user.coopStartDate : prev.startDate,
@@ -345,19 +436,22 @@ const Home: NextPage<any> = () => {
     }
   }, [user]);
 
+  // map initialization
   useEffect(() => {
-    // Map initialization
+    // map initialization
     if (!isMapInitialized.current && user && mapContainerRef.current) {
       isMapInitialized.current = true;
       const isViewer = user.role === "VIEWER";
-      const neuLat = 42.33907;
-      const neuLng = -71.088748;
+      const neuLat = 42.33907; // Northeastern University latitude
+      const neuLng = -71.088748; // Northeastern University longitude
+      
+      // create new map
       const newMap = new mapboxgl.Map({
         container: "map",
         style: "mapbox://styles/mapbox/light-v10",
         center: isViewer
-          ? [neuLng, neuLat]
-          : [user.companyCoordLng, user.companyCoordLat],
+          ? [neuLng, neuLat] // viewer centered at Northeastern University
+          : [user.companyCoordLng, user.companyCoordLat], // other users centered at company
         zoom: 8,
       });
 
@@ -366,7 +460,7 @@ const Home: NextPage<any> = () => {
         setMapState(newMap);
         addMapEvents(newMap, user, setPopupUsers);
 
-        // Initial setting of user and company locations
+        // initial set user and company location
         if (user.role !== "VIEWER") {
           updateUserLocation(newMap, user.startCoordLng, user.startCoordLat);
           updateCompanyLocation(
@@ -383,13 +477,14 @@ const Home: NextPage<any> = () => {
     }
   }, [mapContainerRef, user]);
 
+  // update geojson users data
   useEffect(() => {
     if (mapState && geoJsonUsers && mapStateLoaded) {
       updateGeoJsonUsers(mapState, geoJsonUsers);
     }
   }, [mapState, geoJsonUsers, mapStateLoaded]);
 
-  // separate use effect for user location rendering
+  // user location rendering, separate useEffect
   useEffect(() => {
     if (mapStateLoaded && mapState && user) {
       if (user.role === "VIEWER") {
@@ -420,6 +515,8 @@ const Home: NextPage<any> = () => {
     startAddressSelected,
     user,
   ]);
+  
+  // reset selected user when sidebar type changes
   useEffect(() => {
     setSelectedUserId(null);
   }, [sidebarType]);
@@ -449,6 +546,8 @@ const Home: NextPage<any> = () => {
           endLat: companyAddressSelected.center[1],
         };
       }
+      
+      // remove temporary user marker
       if (tempOtherUserMarkerActive && tempOtherUser) {
         updateCompanyLocation(
           mapState,
@@ -462,6 +561,7 @@ const Home: NextPage<any> = () => {
         setTempOtherUserMarkerActive(false);
         setTempOtherUser(null);
       }
+      
       const viewProps = {
         user,
         otherUser: undefined,
@@ -469,7 +569,7 @@ const Home: NextPage<any> = () => {
         userCoord,
       };
 
-      // Set initial points for directions or route viewing
+      // set initial route points
       setPoints([
         [userCoord.startLng, userCoord.startLat],
         [userCoord.endLng, userCoord.endLat],
@@ -486,23 +586,30 @@ const Home: NextPage<any> = () => {
     tempOtherUser,
     tempOtherUserMarkerActive,
   ]);
+  
+  // use search hook to get company address suggestions
   useSearch({
     value: companyAddress,
     type: "address%2Cpostcode",
     setFunc: setCompanyAddressSuggestions,
   });
 
+  // use search hook to get start address suggestions
   useSearch({
     value: startingAddress,
     type: "address%2Cpostcode",
     setFunc: setStartAddressSuggestions,
   });
+  
+  // get route direction
   useGetDirections({ points: points, map: mapState! });
 
+  // if user is not loaded, show loading animation
   if (!user) {
     return <Spinner />;
   }
 
+  // viewer search box component
   const viewerBox = (
     <div className="absolute left-0 top-0 z-10 m-2 flex min-w-[25rem] flex-col rounded-xl bg-white p-4 shadow-lg ">
       <h2 className="mb-4 text-xl">Search my route</h2>
@@ -557,6 +664,8 @@ const Home: NextPage<any> = () => {
       </div>
     </div>
   );
+  
+  // main component rendering
   return (
     <>
       <UserContext.Provider value={user}>
@@ -569,6 +678,7 @@ const Home: NextPage<any> = () => {
             <title>CarpoolNU</title>
           </Head>
           <div className="m-0 h-full max-h-screen w-full">
+            {/* header component */}
             <Header
               data={{
                 sidebarValue: sidebarType,
@@ -577,6 +687,7 @@ const Home: NextPage<any> = () => {
               }}
             />
             <div className="flex h-[91.5%] overflow-hidden">
+              {/* sidebar */}
               <div className="w-[25rem]  ">
                 {mapState && (
                   <SidebarPage
@@ -599,14 +710,17 @@ const Home: NextPage<any> = () => {
                 )}
               </div>
 
+              {/* map focus button */}
               <button
                 className="absolute bottom-[150px] right-[8px] z-10 flex h-8 w-8 items-center justify-center rounded-md border-2 border-solid border-gray-300 bg-white shadow-sm hover:bg-gray-200"
                 id="fly"
               >
                 <RiFocus3Line />
               </button>
+              
+              {/* map container */}
               <div className="relative flex-auto">
-                {/* Message Panel */}
+                {/* message panel */}
                 {selectedUser && (
                   <div className=" pointer-events-none absolute inset-0 z-10 h-full w-full">
                     <MessagePanel
@@ -618,14 +732,17 @@ const Home: NextPage<any> = () => {
                   </div>
                 )}
 
-                {/* Map Container */}
+                {/* map container */}
                 <div
                   ref={mapContainerRef}
                   id="map"
                   className="pointer-events-auto relative  z-0 h-full w-full flex-auto"
                 >
+                  {/* viewer search box */}
                   {user.role === "VIEWER" && viewerBox}
+                  {/* map legend */}
                   <MapLegend role={user.role} />
+                  {/* map connect portal */}
                   <MapConnectPortal
                     otherUsers={popupUsers}
                     extendUser={extendPublicUser}
@@ -635,6 +752,7 @@ const Home: NextPage<any> = () => {
                       setPopupUsers(null);
                     }}
                   />
+                  {/* inactive blocker, not sure what it is */}
                   {user.status === "INACTIVE" && user.role !== "VIEWER" && (
                     <InactiveBlocker />
                   )}
